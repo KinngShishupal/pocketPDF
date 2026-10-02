@@ -2,6 +2,7 @@ import { DarkTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { C } from '@/constants/theme';
 import { clearPicked } from '@/lib/pickers';
@@ -20,6 +21,7 @@ export default function RootLayout() {
   }, []);
 
   return (
+    <GestureHandlerRootView style={{ flex: 1, backgroundColor: C.bg }}>
     <ThemeProvider value={theme}>
       <StatusBar style="light" />
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: C.bg }, animation: 'slide_from_right' }}>
@@ -28,5 +30,6 @@ export default function RootLayout() {
         <Stack.Screen name="result" options={{ animation: 'fade', gestureEnabled: false }} />
       </Stack>
     </ThemeProvider>
+    </GestureHandlerRootView>
   );
 }

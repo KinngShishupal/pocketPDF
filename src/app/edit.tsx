@@ -2,12 +2,14 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { Image } from 'expo-image';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
-import Animated, { FadeIn, FadeInDown, LinearTransition, SlideInDown } from 'react-native-reanimated';
+import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { ScrollView } from 'react-native-gesture-handler';
+import Animated, { FadeIn, SlideInDown } from 'react-native-reanimated';
 
 import { BusyOverlay } from '@/components/busy-overlay';
 import { FileSlot } from '@/components/file-slot';
 import { PageEditor } from '@/components/page-editor';
+import { SortableGrid } from '@/components/sortable-grid';
 import { Footer, PrimaryButton, Screen, SectionLabel, ToolHeader, Txt, tap } from '@/components/ui';
 import { C, R, S } from '@/constants/theme';
 import { applyEdits, readPages, uid, type EditPage } from '@/lib/edit';
@@ -34,6 +36,7 @@ export default function Edit() {
   const [pages, setPages] = useState<EditPage[]>([]);
   const [thumbs, setThumbs] = useState<Record<number, string>>({});
   const [selected, setSelected] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
   const [editing, setEditing] = useState<{ key: string; image?: string } | null>(null);
 
   useEffect(() => {
@@ -157,7 +160,7 @@ export default function Edit() {
     <Screen glow={tool.colors[0]} glow2={tool.colors[1]}>
       {view}
       <ToolHeader title="Edit PDF" subtitle="Annotate, rotate, reorder & more" icon={tool.icon} colors={tool.colors} />
-      <ScrollView contentContainerStyle={{ paddingHorizontal: S.lg, paddingBottom: sel ? 260 : 140 }}>
+      <ScrollView scrollEnabled={!dragging} contentContainerStyle={{ paddingHorizontal: S.lg, paddingBottom: sel ? 260 : 140 }}>
         <FileSlot
           file={file}
           onChange={(f) => {
@@ -180,7 +183,7 @@ export default function Edit() {
         {pages.length > 0 && (
           <Animated.View entering={FadeIn}>
             <SectionLabel right={editCount > 0 && <Txt variant="caption" style={{ color: tool.colors[1], fontWeight: '700' }}>{editCount} edits</Txt>}>
-              Tap a page to select
+              {pages.length > 1 ? 'Tap to select · hold & drag to reorder' : 'Tap the page to select it'}
             </SectionLabel>
             {status === 'failed' && (
               <View style={styles.offline}>
@@ -190,8 +193,26 @@ export default function Edit() {
                 </Txt>
               </View>
             )}
-            <View style={styles.grid}>
-              {pages.map((p, i) => {
+            <SortableGrid
+              items={pages}
+              keyOf={(p) => p.key}
+              cols={COLS}
+              cellW={cellW}
+              cellH={cellH}
+              gap={GAP}
+              onDragStateChange={setDragging}
+              onTap={(key) => {
+                tap();
+                setSelected((cur) => (cur === key ? null : key));
+              }}
+              onReorder={(keys) =>
+                setPages((ps) => {
+                  if (keys.join('|') === ps.map((p) => p.key).join('|')) return ps;
+                  const byKey = new Map(ps.map((p) => [p.key, p]));
+                  return keys.map((k) => byKey.get(k)).filter((p): p is EditPage => !!p);
+                })
+              }
+              renderItem={(p, i) => {
                 const active = p.key === selected;
                 const total = (p.base + p.rotate) % 360;
                 const sideways = total % 180 !== 0;
@@ -200,46 +221,38 @@ export default function Edit() {
                 const fitH = fitW / ra;
                 const img = p.src !== null ? thumbs[p.src] : undefined;
                 return (
-                  <Animated.View key={p.key} entering={FadeInDown.delay(Math.min(i, 12) * 30)} layout={LinearTransition.springify().damping(18)}>
-                    <Pressable
-                      onPress={() => {
-                        tap();
-                        setSelected(active ? null : p.key);
-                      }}
-                      onLongPress={() => openEditor(p)}
-                      style={[styles.cell, { width: cellW, height: cellH }, active && { borderColor: tool.colors[0], backgroundColor: tool.colors[0] + '1C' }]}>
-                      <View style={{ width: fitW, height: fitH, alignItems: 'center', justifyContent: 'center' }}>
-                        <View
-                          style={[
-                            styles.thumb,
-                            {
-                              width: sideways ? fitH : fitW,
-                              height: sideways ? fitW : fitH,
-                              transform: [{ rotate: `${total}deg` }],
-                            },
-                          ]}>
-                          {img ? (
-                            <Image source={{ uri: img }} style={StyleSheet.absoluteFill} contentFit="fill" transition={200} />
-                          ) : (
-                            p.src !== null && status !== 'failed' && <ActivityIndicator size="small" color="#C0C0D0" />
-                          )}
-                        </View>
-                      </View>
-                      <View style={styles.cellFoot}>
-                        <Text style={[styles.pageNo, active && { color: C.text }]}>{i + 1}</Text>
-                        {p.src === null && <Text style={styles.tag}>BLANK</Text>}
-                        {p.anns.length > 0 && (
-                          <View style={[styles.badge, { backgroundColor: tool.colors[0] }]}>
-                            <Ionicons name="brush" size={9} color="#fff" />
-                            <Text style={styles.badgeText}>{p.anns.length}</Text>
-                          </View>
+                  <View style={[styles.cell, { width: cellW, height: cellH }, active && { borderColor: tool.colors[0], backgroundColor: C.surface2 }]}>
+                    <View style={{ width: fitW, height: fitH, alignItems: 'center', justifyContent: 'center' }}>
+                      <View
+                        style={[
+                          styles.thumb,
+                          {
+                            width: sideways ? fitH : fitW,
+                            height: sideways ? fitW : fitH,
+                            transform: [{ rotate: `${total}deg` }],
+                          },
+                        ]}>
+                        {img ? (
+                          <Image source={{ uri: img }} style={StyleSheet.absoluteFill} contentFit="fill" transition={200} />
+                        ) : (
+                          p.src !== null && status !== 'failed' && <ActivityIndicator size="small" color="#C0C0D0" />
                         )}
                       </View>
-                    </Pressable>
-                  </Animated.View>
+                    </View>
+                    <View style={styles.cellFoot}>
+                      <Text style={[styles.pageNo, active && { color: C.text }]}>{i + 1}</Text>
+                      {p.src === null && <Text style={styles.tag}>BLANK</Text>}
+                      {p.anns.length > 0 && (
+                        <View style={[styles.badge, { backgroundColor: tool.colors[0] }]}>
+                          <Ionicons name="brush" size={9} color="#fff" />
+                          <Text style={styles.badgeText}>{p.anns.length}</Text>
+                        </View>
+                      )}
+                    </View>
+                  </View>
                 );
-              })}
-            </View>
+              }}
+            />
           </Animated.View>
         )}
       </ScrollView>
@@ -285,7 +298,6 @@ export default function Edit() {
 const styles = StyleSheet.create({
   loading: { alignItems: 'center', gap: S.sm, paddingVertical: S.xxl },
   offline: { flexDirection: 'row', alignItems: 'center', gap: S.sm, padding: S.md, borderRadius: R.md, backgroundColor: C.card, marginBottom: S.md },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: GAP },
   cell: {
     borderRadius: R.md,
     alignItems: 'center',
