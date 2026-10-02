@@ -8,7 +8,11 @@
     "scheme": "onetappdf",
     "userInterfaceStyle": "dark",
     "ios": {
-      "bundleIdentifier": "com.kinngshishupal.onetappdf"
+      "bundleIdentifier": "com.kinngshishupal.onetappdf",
+      "infoPlist": {
+        "NSSpeechRecognitionUsageDescription": "1TapPDF converts your speech into text for your documents.",
+        "NSMicrophoneUsageDescription": "1TapPDF uses the microphone so you can type documents by speaking."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -18,7 +22,11 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.kinngshishupal.onetappdf"
+      "package": "com.kinngshishupal.onetappdf",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "output": "static",
@@ -67,6 +75,12 @@
       "typedRoutes": true,
       "reactCompiler": true
     },
-    "backgroundColor": "#07070F"
+    "backgroundColor": "#07070F",
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "f3d310e3-9dfc-4962-bc93-dec6534216da"
+      }
+    }
   }
 }
