@@ -1,6 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { ScrollView } from 'react-native-gesture-handler';
 import Animated, { FadeIn, SlideInDown } from 'react-native-reanimated';
@@ -26,7 +26,7 @@ const GAP = 10;
 export default function Edit() {
   const { docId } = useLocalSearchParams<{ docId?: string }>();
   const { width } = useWindowDimensions();
-  const { status, load, render, view } = usePdfRenderer();
+  const { status, load, render, text, view } = usePdfRenderer();
   const task = useTask();
 
   const [file, setFile] = useState<PickedFile | null>(() => {
@@ -75,6 +75,12 @@ export default function Edit() {
   const sel = selIndex >= 0 ? pages[selIndex] : null;
   const editCount = pages.reduce((n, p) => n + p.anns.length, 0);
   const editingIndex = editing ? pages.findIndex((p) => p.key === editing.key) : -1;
+  const editingSrc = editingIndex >= 0 ? pages[editingIndex].src : null;
+  // Stable per page, so the editor detects text once.
+  const loadText = useMemo(
+    () => (editingSrc !== null && status !== 'failed' ? () => text(editingSrc) : undefined),
+    [editingSrc, status, text],
+  );
 
   const update = (fn: (pages: EditPage[]) => EditPage[]) => {
     tap();
@@ -268,6 +274,7 @@ export default function Edit() {
           index={editingIndex}
           image={editing.image}
           colors={tool.colors}
+          loadText={loadText}
           onClose={() => setEditing(null)}
           onSave={(anns) => {
             setPages((ps) => ps.map((p) => (p.key === editing.key ? { ...p, anns } : p)));

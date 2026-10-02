@@ -1,7 +1,8 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { Image } from 'expo-image';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   KeyboardAvoidingView,
   Modal,
   PanResponder,
@@ -18,26 +19,28 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Path, Rect } from 'react-native-svg';
 
 import { C, R, S } from '@/constants/theme';
-import { LINE, annBounds, moveAnn, uid, type Ann, type EditPage, type InkAnn, type RectAnn } from '@/lib/edit';
+import { LINE, annBounds, moveAnn, uid, type Ann, type EditPage, type FontFamily, type InkAnn, type RectAnn, type TextBlock } from '@/lib/edit';
 import { strokesToPath } from '@/lib/signatures';
 import type { Gradient, IconName } from '@/lib/tools';
 
 import { GhostButton, IconButton, PrimaryButton, Screen, Txt, tap } from './ui';
 
-type Mode = 'select' | 'text' | 'draw' | 'highlight' | 'whiteout';
+type Mode = 'edit' | 'select' | 'text' | 'draw' | 'highlight' | 'whiteout';
 type Size = { w: number; h: number };
 
 const MODES: { key: Mode; label: string; icon: IconName }[] = [
-  { key: 'select', label: 'Move', icon: 'hand-left-outline' },
-  { key: 'text', label: 'Text', icon: 'text' },
+  { key: 'edit', label: 'Edit text', icon: 'create-outline' },
+  { key: 'text', label: 'Add text', icon: 'text' },
   { key: 'draw', label: 'Draw', icon: 'brush' },
   { key: 'highlight', label: 'Highlight', icon: 'color-fill' },
   { key: 'whiteout', label: 'Whiteout', icon: 'square' },
+  { key: 'select', label: 'Move', icon: 'hand-left-outline' },
 ];
 const INK = ['#111827', '#DC2626', '#2563EB', '#059669', '#F59E0B'];
 const MARKER = ['#FDE047', '#86EFAC', '#F9A8D4', '#93C5FD'];
 const PEN = { thin: 1.5, medium: 3, thick: 6 } as const;
 const HINT: Record<Mode, string> = {
+  edit: 'Tap any outlined line to change its text',
   select: 'Tap an item to select it, drag to move',
   text: 'Tap where the text should go',
   draw: 'Draw freely on the page',
@@ -47,7 +50,19 @@ const HINT: Record<Mode, string> = {
 
 const clamp = (v: number) => Math.min(1, Math.max(0, v));
 
-type TextDraft = { id?: string; nx: number; ny: number; text: string; size: number; bold: boolean };
+/** `block` is set when editing existing page text rather than adding new text. */
+type TextDraft = { id?: string; nx: number; ny: number; text: string; size: number; bold: boolean; block?: TextBlock };
+
+const FAMILY: Record<FontFamily, string | undefined> = {
+  sans: Platform.select({ ios: 'Helvetica', default: 'sans-serif' }),
+  serif: Platform.select({ ios: 'Times New Roman', default: 'serif' }),
+  mono: Platform.select({ ios: 'Courier', default: 'monospace' }),
+};
+/** Approximate distance from a text box's top to its baseline, as a fraction of font size. */
+const ASCENT = Platform.OS === 'ios' ? 0.8 : 0.93;
+
+const inside = (p: { x: number; y: number }, b: { nx: number; ny: number; nw: number; nh: number }, pad = 0.006) =>
+  p.x >= b.nx - pad && p.x <= b.nx + b.nw + pad && p.y >= b.ny - pad && p.y <= b.ny + b.nh + pad;
 
 export function PageEditor({
   page,
@@ -56,6 +71,7 @@ export function PageEditor({
   colors,
   onClose,
   onSave,
+  loadText,
 }: {
   page: EditPage;
   index: number;
@@ -63,12 +79,17 @@ export function PageEditor({
   colors: Gradient;
   onClose: () => void;
   onSave: (anns: Ann[]) => void;
+  /** Detects existing text lines; omitted for blank pages or when previews are unavailable. */
+  loadText?: () => Promise<TextBlock[]>;
 }) {
   const insets = useSafeAreaInsets();
   const defaultSize = Math.max(8, Math.round(page.box.w / 40));
 
   const [anns, setAnns] = useState<Ann[]>(page.anns);
-  const [mode, setMode] = useState<Mode>('text');
+  const firstMode: Mode = loadText ? 'edit' : 'text';
+  const [mode, setMode] = useState<Mode>(firstMode);
+  const [blocks, setBlocks] = useState<TextBlock[] | null>(null);
+  const [textError, setTextError] = useState(false);
   const [ink, setInk] = useState(INK[0]);
   const [marker, setMarker] = useState(MARKER[0]);
   const [pen, setPen] = useState<keyof typeof PEN>('medium');
@@ -80,7 +101,8 @@ export function PageEditor({
   // The responder is created once, so it reads live values through these refs (updated only in handlers).
   const s = useRef({
     anns: page.anns,
-    mode: 'text' as Mode,
+    mode: firstMode as Mode,
+    blocks: [] as TextBlock[],
     ink: INK[0],
     marker: MARKER[0],
     pen: PEN.medium as number,
@@ -90,6 +112,21 @@ export function PageEditor({
     draft: null as InkAnn | RectAnn | null,
     dragOrigin: null as Ann | null,
   });
+
+  useEffect(() => {
+    if (!loadText) return;
+    let alive = true;
+    loadText()
+      .then((found) => {
+        if (!alive) return;
+        s.current.blocks = found;
+        setBlocks(found);
+      })
+      .catch(() => alive && setTextError(true));
+    return () => {
+      alive = false;
+    };
+  }, [loadText]);
 
   const commit = (next: Ann[]) => {
     s.current.anns = next;
@@ -171,6 +208,20 @@ export function PageEditor({
           commit([...st.anns, d]);
         } else if (st.mode === 'text' && !st.moved) {
           setTextDraft({ nx: st.start.x, ny: st.start.y, text: '', size: defaultSize, bold: false });
+        } else if (st.mode === 'edit' && !st.moved) {
+          const p = st.start;
+          const existing = [...st.anns].reverse().find((a) => a.type === 'replace' && inside(p, a));
+          if (existing?.type === 'replace') {
+            const block: TextBlock = { ...existing, id: existing.block, text: existing.original };
+            setTextDraft({ id: existing.id, nx: existing.nx, ny: existing.ny, text: existing.text, size: existing.size, bold: existing.bold, block });
+          } else {
+            // Prefer the smallest line under the finger.
+            const hit = st.blocks.filter((b) => inside(p, b)).sort((a, b) => a.nw * a.nh - b.nw * b.nh)[0];
+            if (hit) {
+              tap();
+              setTextDraft({ nx: hit.nx, ny: hit.ny, text: hit.text, size: hit.size, bold: hit.bold, block: hit });
+            }
+          }
         }
         st.draft = null;
         st.dragOrigin = null;
@@ -184,6 +235,23 @@ export function PageEditor({
 
   const saveText = () => {
     if (!textDraft) return;
+    if (textDraft.block) {
+      const b = textDraft.block;
+      const text = textDraft.text.replace(/\s*\n\s*/g, ' ').trim();
+      const unchanged = text === b.text && textDraft.size === b.size && textDraft.bold === b.bold;
+      if (textDraft.id) {
+        commit(
+          unchanged
+            ? anns.filter((a) => a.id !== textDraft.id)
+            : anns.map((a) => (a.id === textDraft.id && a.type === 'replace' ? { ...a, text, size: textDraft.size, bold: textDraft.bold } : a)),
+        );
+      } else if (!unchanged) {
+        const { id: blockId, ...rest } = b;
+        commit([...anns, { ...rest, id: uid(), type: 'replace', block: blockId, original: b.text, text, size: textDraft.size, bold: textDraft.bold }]);
+      }
+      setTextDraft(null);
+      return;
+    }
     const text = textDraft.text.replace(/\s+$/, '');
     if (textDraft.id) {
       commit(
@@ -200,7 +268,7 @@ export function PageEditor({
   };
 
   const renderAnn = (a: Ann, ghost = false) => {
-    if (a.type === 'text') return null;
+    if (a.type === 'text' || a.type === 'replace') return null;
     if (a.type === 'ink') {
       const d = strokesToPath([a.points.map((p) => ({ x: p.x * disp.w, y: p.y * disp.h }))]);
       return <Path key={a.id} d={d} stroke={a.color} strokeWidth={a.width * k} strokeLinecap="round" strokeLinejoin="round" fill="none" opacity={ghost ? 0.7 : 1} />;
@@ -222,6 +290,13 @@ export function PageEditor({
   };
 
   const selBounds = sel ? annBounds(sel, page.box) : null;
+  const replaced = new Set(anns.flatMap((a) => (a.type === 'replace' ? [a.block] : [])));
+  const editCount = anns.filter((a) => a.type === 'replace').length;
+  const textLoading = !!loadText && blocks === null && !textError;
+  const editBlock = (a: Ann) => {
+    if (a.type !== 'replace') return;
+    setTextDraft({ id: a.id, nx: a.nx, ny: a.ny, text: a.text, size: a.size, bold: a.bold, block: { ...a, id: a.block, text: a.original } });
+  };
 
   return (
     <Modal visible animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
@@ -255,7 +330,84 @@ export function PageEditor({
                   </View>
                 )
               )}
+              {anns.map(
+                (a) =>
+                  a.type === 'replace' && (
+                    <View
+                      key={a.id}
+                      pointerEvents="none"
+                      style={{
+                        position: 'absolute',
+                        left: a.nx * disp.w - a.size * k * 0.08,
+                        top: a.ny * disp.h - a.size * k * 0.08,
+                        width: a.nw * disp.w + a.size * k * 0.16,
+                        height: a.nh * disp.h + a.size * k * 0.16,
+                        backgroundColor: a.bg,
+                      }}
+                    />
+                  ),
+              )}
+              {anns.map(
+                (a) =>
+                  a.type === 'replace' &&
+                  !!a.text && (
+                    <Text
+                      key={a.id + '-t'}
+                      pointerEvents="none"
+                      numberOfLines={1}
+                      style={{
+                        position: 'absolute',
+                        left: a.nx * disp.w,
+                        top: a.nbase * disp.h - a.size * k * ASCENT,
+                        width: (1 - a.nx) * disp.w,
+                        color: a.color,
+                        fontSize: a.size * k,
+                        fontFamily: FAMILY[a.family],
+                        fontWeight: a.bold ? '700' : '400',
+                        fontStyle: a.italic ? 'italic' : 'normal',
+                        includeFontPadding: false,
+                      }}>
+                      {a.text}
+                    </Text>
+                  ),
+              )}
               <Svg pointerEvents="none" style={StyleSheet.absoluteFill}>
+                {mode === 'edit' &&
+                  blocks
+                    ?.filter((b) => !replaced.has(b.id))
+                    .map((b) => (
+                      <Rect
+                        key={b.id}
+                        x={b.nx * disp.w - 2}
+                        y={b.ny * disp.h - 1}
+                        width={b.nw * disp.w + 4}
+                        height={b.nh * disp.h + 2}
+                        rx={2}
+                        fill={colors[0]}
+                        fillOpacity={0.08}
+                        stroke={colors[0]}
+                        strokeOpacity={0.55}
+                        strokeWidth={1}
+                        strokeDasharray="3 2"
+                      />
+                    ))}
+                {mode === 'edit' &&
+                  anns.map(
+                    (a) =>
+                      a.type === 'replace' && (
+                        <Rect
+                          key={a.id + '-o'}
+                          x={a.nx * disp.w - 2}
+                          y={a.ny * disp.h - 1}
+                          width={annBounds(a, page.box).w * disp.w + 4}
+                          height={a.nh * disp.h + 2}
+                          rx={2}
+                          fill="none"
+                          stroke={colors[1]}
+                          strokeWidth={1.5}
+                        />
+                      ),
+                  )}
                 {anns.map((a) => renderAnn(a))}
                 {draft && renderAnn(draft, true)}
               </Svg>
@@ -297,6 +449,7 @@ export function PageEditor({
         <View style={[styles.bottom, { paddingBottom: insets.bottom + S.md }]}>
           {sel && mode === 'select' ? (
             <Animated.View entering={FadeInDown.duration(180)} style={styles.context}>
+              {sel.type === 'replace' && <GhostButton compact icon="create-outline" label="Edit text" onPress={() => editBlock(sel)} />}
               {sel.type === 'text' && (
                 <>
                   <GhostButton
@@ -316,7 +469,7 @@ export function PageEditor({
               <GhostButton
                 compact
                 icon="trash-outline"
-                label="Delete"
+                label={sel.type === 'replace' ? 'Restore original' : 'Delete'}
                 tint={C.danger}
                 onPress={() => {
                   commit(anns.filter((a) => a.id !== sel.id));
@@ -326,6 +479,24 @@ export function PageEditor({
             </Animated.View>
           ) : (
             <View style={styles.context}>
+              {mode === 'edit' && (
+                <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: S.sm }}>
+                  {textLoading && <ActivityIndicator size="small" color={colors[1]} />}
+                  <Txt variant="caption" style={{ flex: 1 }} numberOfLines={2}>
+                    {!loadText
+                      ? page.src === null
+                        ? 'Blank pages have no existing text. Use Add text instead.'
+                        : 'Finding text needs an internet connection (for page previews).'
+                      : textLoading
+                        ? 'Finding text on this page…'
+                        : textError
+                          ? "Couldn't read the text on this page."
+                          : blocks && blocks.length === 0
+                            ? 'No editable text here. It may be a scanned image; try Whiteout + Add text.'
+                            : `${blocks?.length ?? 0} lines found · ${editCount} edited`}
+                  </Txt>
+                </View>
+              )}
               {(mode === 'text' || mode === 'draw') &&
                 INK.map((c) => (
                   <Swatch
@@ -390,22 +561,27 @@ export function PageEditor({
           <Modal transparent animationType="fade" onRequestClose={() => setTextDraft(null)}>
             <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.sheetBackdrop}>
               <Animated.View entering={FadeIn.duration(150)} style={styles.sheet}>
-                <Txt variant="h2">{textDraft.id ? 'Edit text' : 'Add text'}</Txt>
+                <Txt variant="h2">{textDraft.block || textDraft.id ? 'Edit text' : 'Add text'}</Txt>
+                {textDraft.block && (
+                  <Txt variant="caption" numberOfLines={2}>
+                    Original: “{textDraft.block.text}” · Clear it to remove the line
+                  </Txt>
+                )}
                 <TextInput
                   value={textDraft.text}
                   onChangeText={(text) => setTextDraft({ ...textDraft, text })}
                   autoFocus
-                  multiline
+                  multiline={!textDraft.block}
                   placeholder="Type here…"
                   placeholderTextColor={C.faint}
                   style={styles.input}
                 />
                 <View style={styles.sheetRow}>
-                  <IconButton icon="remove" size={34} onPress={() => setTextDraft({ ...textDraft, size: Math.max(6, textDraft.size - 2) })} />
+                  <IconButton icon="remove" size={34} onPress={() => setTextDraft({ ...textDraft, size: Math.max(4, textDraft.size - (textDraft.block ? 0.5 : 2)) })} />
                   <Txt variant="label" style={{ minWidth: 44, textAlign: 'center' }}>
                     {textDraft.size}pt
                   </Txt>
-                  <IconButton icon="add" size={34} onPress={() => setTextDraft({ ...textDraft, size: Math.min(96, textDraft.size + 2) })} />
+                  <IconButton icon="add" size={34} onPress={() => setTextDraft({ ...textDraft, size: Math.min(96, textDraft.size + (textDraft.block ? 0.5 : 2)) })} />
                   <View style={{ flex: 1 }} />
                   <Pressable
                     onPress={() => setTextDraft({ ...textDraft, bold: !textDraft.bold })}
@@ -415,7 +591,7 @@ export function PageEditor({
                 </View>
                 <View style={{ flexDirection: 'row', gap: S.sm }}>
                   <GhostButton label="Cancel" onPress={() => setTextDraft(null)} style={{ flex: 1 }} />
-                  <PrimaryButton label={textDraft.id ? 'Update' : 'Add'} colors={colors} onPress={saveText} style={{ flex: 1 }} />
+                  <PrimaryButton label={textDraft.block ? 'Replace' : textDraft.id ? 'Update' : 'Add'} colors={colors} onPress={saveText} style={{ flex: 1 }} />
                 </View>
               </Animated.View>
             </KeyboardAvoidingView>
