@@ -52,7 +52,6 @@
         "expo-camera",
         {
           "cameraPermission": "1TapPDF uses the camera to scan your documents.",
-          "microphonePermission": false,
           "recordAudioAndroid": false,
           "barcodeScannerEnabled": false
         }
@@ -61,8 +60,7 @@
         "expo-image-picker",
         {
           "photosPermission": "1TapPDF needs access to your photos to turn them into PDFs.",
-          "cameraPermission": "1TapPDF uses the camera to scan your documents.",
-          "microphonePermission": false
+          "cameraPermission": "1TapPDF uses the camera to scan your documents."
         }
       ],
       [
