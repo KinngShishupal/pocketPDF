@@ -38,9 +38,9 @@ export function clearPicked() {
  * cache copy can sit outside the app's sandbox (e.g. in Expo Go on Android),
  * where expo-file-system refuses to read it; content:// URIs are always readable.
  */
-async function adopt(uri: string) {
+async function adopt(uri: string, ext = 'pdf') {
   if (!pickedDir.exists) pickedDir.create({ intermediates: true });
-  const target = new File(pickedDir, `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.pdf`);
+  const target = new File(pickedDir, `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`);
   writeFile(target, await new File(uri).bytes());
   return target;
 }
@@ -58,6 +58,29 @@ export async function pickPdfs(multiple: boolean): Promise<PickedFile[]> {
     try {
       const local = await adopt(a.uri);
       files.push({ uri: local.uri, name: a.name.replace(/\.pdf$/i, ''), size: local.size, kind: 'pdf' });
+    } catch (e) {
+      Alert.alert(`Couldn't open "${a.name}"`, e instanceof Error ? e.message : String(e));
+    }
+  }
+  return files;
+}
+
+export type PickedAny = { uri: string; name: string; size: number };
+
+/** Picks documents of any type (for conversion), copied into the app's own cache. */
+export async function pickAnyFiles(): Promise<PickedAny[]> {
+  const res = await DocumentPicker.getDocumentAsync({
+    type: '*/*',
+    multiple: true,
+    copyToCacheDirectory: Platform.OS !== 'android',
+  });
+  if (res.canceled) return [];
+  const files: PickedAny[] = [];
+  for (const a of res.assets) {
+    try {
+      const ext = a.name.match(/\.([A-Za-z0-9]+)$/)?.[1]?.toLowerCase() ?? 'bin';
+      const local = await adopt(a.uri, ext);
+      files.push({ uri: local.uri, name: a.name, size: local.size });
     } catch (e) {
       Alert.alert(`Couldn't open "${a.name}"`, e instanceof Error ? e.message : String(e));
     }

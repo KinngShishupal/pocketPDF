@@ -60,7 +60,7 @@ export const TOOLS: Record<ToolKey, Tool> = {
   convert: {
     key: 'convert',
     title: 'Convert',
-    tagline: 'Photos & text to PDF',
+    tagline: 'Word, Excel, photos & more',
     icon: 'swap-horizontal',
     colors: ['#3A86FF', '#4CC9F0'],
     route: '/convert',

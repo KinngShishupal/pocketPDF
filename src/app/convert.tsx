@@ -3,23 +3,26 @@ import { Image } from 'expo-image';
 import * as Print from 'expo-print';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import Animated, { FadeIn, FadeInDown, LinearTransition } from 'react-native-reanimated';
 
 import { BusyOverlay } from '@/components/busy-overlay';
+import { FileRow, FormatWall } from '@/components/convert-files';
 import { VoicePanel } from '@/components/voice-panel';
-import { Card, Footer, PrimaryButton, Screen, SectionLabel, Segmented, ToggleRow, ToolHeader, Txt, tap } from '@/components/ui';
+import { Card, Footer, GhostButton, PrimaryButton, Screen, SectionLabel, Segmented, ToggleRow, ToolHeader, Txt, tap } from '@/components/ui';
 import { C, R, S } from '@/constants/theme';
+import { convertFiles, type ConvertItem, type Orientation, type Paper } from '@/lib/convert-files';
+import { extOf, formatOf } from '@/lib/converters';
 import { appendPhrase } from '@/lib/dictation';
 import { stampName } from '@/lib/fs';
 import { saveDoc } from '@/lib/library';
 import { imagesToPdf, type PageSize } from '@/lib/pdf';
-import { pickImages, type PickedFile } from '@/lib/pickers';
+import { pickAnyFiles, pickImages, type PickedFile } from '@/lib/pickers';
 import { TOOLS } from '@/lib/tools';
 import { useTask } from '@/lib/use-task';
 
 const tool = TOOLS.convert;
-type Mode = 'images' | 'text';
+type Mode = 'files' | 'images' | 'text';
 type Quality = 'high' | 'standard' | 'small';
 type TextStyleKey = 'clean' | 'serif' | 'mono';
 
@@ -62,7 +65,11 @@ function buildHtml(title: string, body: string, style: TextStyleKey) {
 
 export default function Convert() {
   const params = useLocalSearchParams<{ mode?: Mode }>();
-  const [mode, setMode] = useState<Mode>(params.mode === 'text' ? 'text' : 'images');
+  const [mode, setMode] = useState<Mode>(params.mode === 'text' || params.mode === 'images' ? params.mode : 'files');
+  const [files, setFiles] = useState<ConvertItem[]>([]);
+  const [paper, setPaper] = useState<Paper>('a4');
+  const [orientation, setOrientation] = useState<Orientation>('auto');
+  const [combine, setCombine] = useState(false);
   const [images, setImages] = useState<Img[]>([]);
   const [pageSize, setPageSize] = useState<PageSize>('a4');
   const [quality, setQuality] = useState<Quality>('standard');
@@ -100,23 +107,125 @@ export default function Convert() {
     if (doc) router.replace({ pathname: '/result', params: { id: doc.id } });
   };
 
-  const ready = mode === 'images' ? images.length > 0 : body.trim().length > 0;
+  const addFiles = async () => {
+    const picked = await pickAnyFiles();
+    const accepted: ConvertItem[] = [];
+    const skipped: string[] = [];
+    for (const p of picked) {
+      const format = formatOf(p.name);
+      if (format) accepted.push({ ...p, key: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, format });
+      else skipped.push(extOf(p.name) === 'pdf' ? `${p.name} (already a PDF)` : p.name);
+    }
+    setFiles((cur) => [...cur, ...accepted]);
+    if (skipped.length) Alert.alert('Some files were skipped', `These formats aren't supported:\n\n${skipped.join('\n')}`);
+  };
+
+  const convertDocuments = async () => {
+    const res = await task.run(files.length > 1 ? `Converting ${files.length} files` : 'Converting file', (report) =>
+      convertFiles(files, { paper, orientation, combine }, report),
+    );
+    if (!res) return;
+    if (res.failures.length) {
+      Alert.alert(
+        res.docs.length ? 'Some files failed' : 'Conversion failed',
+        res.failures.map((x) => `• ${x.name}\n  ${x.message}`).join('\n\n'),
+      );
+    }
+    if (!res.docs.length) return;
+    const n = res.docs.length;
+    const ok = files.length - res.failures.length;
+    router.replace({
+      pathname: '/result',
+      params: {
+        id: res.docs[0].id,
+        count: n > 1 ? String(n) : undefined,
+        note:
+          combine && files.length > 1
+            ? `${ok} files combined into one PDF.`
+            : n > 1
+              ? `${n} PDFs saved to Files.`
+              : `Converted from ${files[0].format.label}.`,
+      },
+    });
+  };
+
+  const ready = mode === 'files' ? files.length > 0 : mode === 'images' ? images.length > 0 : body.trim().length > 0;
 
   return (
     <Screen glow={tool.colors[0]} glow2={tool.colors[1]}>
-      <ToolHeader title="Convert" subtitle="Create PDFs from photos or text" icon={tool.icon} colors={tool.colors} />
+      <ToolHeader title="Convert" subtitle="Documents, photos or text to PDF" icon={tool.icon} colors={tool.colors} />
       <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
         <Segmented
           value={mode}
           onChange={setMode}
           accent={tool.colors[0]}
           options={[
-            { value: 'images', label: 'Photos → PDF', icon: 'images-outline' },
-            { value: 'text', label: 'Text → PDF', icon: 'text-outline' },
+            { value: 'files', label: 'Files', icon: 'documents-outline' },
+            { value: 'images', label: 'Photos', icon: 'images-outline' },
+            { value: 'text', label: 'Write', icon: 'create-outline' },
           ]}
         />
 
-        {mode === 'images' ? (
+        {mode === 'files' ? (
+          <Animated.View entering={FadeIn} key="files">
+            <SectionLabel right={files.length > 0 && <Txt variant="caption">{files.length} {files.length === 1 ? 'file' : 'files'}</Txt>}>
+              {files.length ? 'Ready to convert' : 'Supported formats'}
+            </SectionLabel>
+            {files.length === 0 ? (
+              <FormatWall />
+            ) : (
+              <View style={{ gap: S.sm }}>
+                {files.map((item, i) => (
+                  <FileRow key={item.key} item={item} index={i} onRemove={() => setFiles((cur) => cur.filter((x) => x.key !== item.key))} />
+                ))}
+              </View>
+            )}
+            <GhostButton
+              icon="add-circle-outline"
+              label={files.length ? 'Add more files' : 'Choose files'}
+              tint={tool.colors[1]}
+              onPress={addFiles}
+              style={{ marginTop: S.md, borderStyle: 'dashed', borderColor: tool.colors[0] + '88' }}
+            />
+
+            {files.length > 0 && (
+              <>
+                <SectionLabel>Paper</SectionLabel>
+                <Segmented
+                  value={paper}
+                  onChange={setPaper}
+                  accent={tool.colors[0]}
+                  options={[
+                    { value: 'a4', label: 'A4' },
+                    { value: 'letter', label: 'Letter' },
+                  ]}
+                />
+                <SectionLabel right={<Txt variant="caption">Auto: sheets and slides go wide</Txt>}>Orientation</SectionLabel>
+                <Segmented
+                  value={orientation}
+                  onChange={setOrientation}
+                  accent={tool.colors[0]}
+                  options={[
+                    { value: 'auto', label: 'Auto', icon: 'sparkles-outline' },
+                    { value: 'portrait', label: 'Portrait', icon: 'phone-portrait-outline' },
+                    { value: 'landscape', label: 'Landscape', icon: 'phone-landscape-outline' },
+                  ]}
+                />
+                {files.length > 1 && (
+                  <Card style={{ marginTop: S.md, paddingVertical: S.sm }}>
+                    <ToggleRow
+                      label="Combine into one PDF"
+                      hint="In the order listed above"
+                      value={combine}
+                      onChange={setCombine}
+                      accent={tool.colors[0]}
+                    />
+                  </Card>
+                )}
+              </>
+            )}
+          </Animated.View>
+        ) : mode === 'images' ? (
           <Animated.View entering={FadeIn} key="images">
             <SectionLabel right={images.length > 0 && <Txt variant="caption">Tap a photo to rotate</Txt>}>
               {`Photos · ${images.length}`}
@@ -223,11 +332,21 @@ export default function Convert() {
       </ScrollView>
       <Footer>
         <PrimaryButton
-          label={mode === 'images' ? (images.length ? `Create PDF · ${images.length} pages` : 'Add photos first') : 'Create PDF'}
+          label={
+            mode === 'files'
+              ? files.length
+                ? `Convert ${files.length} ${files.length === 1 ? 'file' : 'files'}${combine && files.length > 1 ? ' into 1 PDF' : ''}`
+                : 'Choose files first'
+              : mode === 'images'
+                ? images.length
+                  ? `Create PDF · ${images.length} pages`
+                  : 'Add photos first'
+                : 'Create PDF'
+          }
           icon="sparkles"
           colors={tool.colors}
           disabled={!ready}
-          onPress={mode === 'images' ? convertImages : convertText}
+          onPress={mode === 'files' ? convertDocuments : mode === 'images' ? convertImages : convertText}
         />
       </Footer>
       <BusyOverlay visible={task.busy} label={task.label} progress={task.progress} colors={tool.colors} />
