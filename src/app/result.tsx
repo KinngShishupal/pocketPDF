@@ -46,7 +46,7 @@ export default function Result() {
           </Animated.View>
           <Animated.View entering={FadeInDown.delay(150)} style={{ alignItems: 'center', gap: 4 }}>
             <Txt variant="h1">{count && Number(count) > 1 ? `${count} PDFs ready` : 'Your PDF is ready'}</Txt>
-            <Txt style={{ textAlign: 'center' }}>{note ?? 'Saved to your DocKeeper library.'}</Txt>
+            <Txt style={{ textAlign: 'center' }}>{note ?? 'Saved to your 1TapPDF library.'}</Txt>
           </Animated.View>
         </View>
 

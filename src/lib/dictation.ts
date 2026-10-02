@@ -78,7 +78,7 @@ export function useDictation(onPhrase: (text: string) => void) {
       speech.addListener('error', (e) => {
         if (e.error === 'no-speech' || e.error === 'aborted') return;
         if (e.error === 'not-allowed') {
-          Alert.alert('Microphone blocked', 'Allow microphone and speech recognition for DocKeeper in Settings.', [
+          Alert.alert('Microphone blocked', 'Allow microphone and speech recognition for 1TapPDF in Settings.', [
             { text: 'Cancel', style: 'cancel' },
             { text: 'Open Settings', onPress: () => Linking.openSettings() },
           ]);

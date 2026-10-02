@@ -1,9 +1,9 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, Alert, Modal, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { ScrollView } from 'react-native-gesture-handler';
-import Animated, { FadeIn, SlideInDown } from 'react-native-reanimated';
+import Animated, { FadeIn } from 'react-native-reanimated';
 
 import { BusyOverlay } from '@/components/busy-overlay';
 import { FileSlot } from '@/components/file-slot';
@@ -12,11 +12,11 @@ import { PageThumb } from '@/components/page-thumb';
 import { SortableGrid } from '@/components/sortable-grid';
 import { Footer, PrimaryButton, Screen, SectionLabel, ToolHeader, Txt, tap } from '@/components/ui';
 import { C, R, S } from '@/constants/theme';
-import { applyEdits, readPages, uid, type EditPage } from '@/lib/edit';
+import { applyEdits, readPages, uid, type Ann, type EditPage } from '@/lib/edit';
 import { getDoc, saveDoc } from '@/lib/library';
 import { usePdfRenderer } from '@/lib/pdf-renderer';
 import { fromDoc, type PickedFile } from '@/lib/pickers';
-import { TOOLS, type IconName } from '@/lib/tools';
+import { TOOLS } from '@/lib/tools';
 import { useTask } from '@/lib/use-task';
 
 const tool = TOOLS.edit;
@@ -35,7 +35,6 @@ export default function Edit() {
   });
   const [pages, setPages] = useState<EditPage[]>([]);
   const [thumbs, setThumbs] = useState<Record<number, string>>({});
-  const [selected, setSelected] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [editing, setEditing] = useState<{ key: string; image?: string } | null>(null);
 
@@ -71,63 +70,18 @@ export default function Edit() {
 
   const cellW = (width - S.lg * 2 - GAP * (COLS - 1)) / COLS;
   const cellH = cellW * 1.35;
-  const selIndex = pages.findIndex((p) => p.key === selected);
-  const sel = selIndex >= 0 ? pages[selIndex] : null;
   const editCount = pages.reduce((n, p) => n + p.anns.length, 0);
   const editingIndex = editing ? pages.findIndex((p) => p.key === editing.key) : -1;
-  const editingSrc = editingIndex >= 0 ? pages[editingIndex].src : null;
+  const current = editingIndex >= 0 ? pages[editingIndex] : null;
+  const editingSrc = current ? current.src : null;
   // Stable per page, so the editor detects text once.
   const loadText = useMemo(
     () => (editingSrc !== null && status !== 'failed' ? () => text(editingSrc) : undefined),
     [editingSrc, status, text],
   );
 
-  const update = (fn: (pages: EditPage[]) => EditPage[]) => {
-    tap();
-    setPages(fn);
-  };
-
-  const rotate = (delta: number) =>
-    update((ps) => ps.map((p) => (p.key === selected ? { ...p, rotate: (p.rotate + delta + 360) % 360 } : p)));
-
-  const move = (dir: -1 | 1) =>
-    update((ps) => {
-      const i = ps.findIndex((p) => p.key === selected);
-      const j = i + dir;
-      if (i < 0 || j < 0 || j >= ps.length) return ps;
-      const next = [...ps];
-      [next[i], next[j]] = [next[j], next[i]];
-      return next;
-    });
-
-  const duplicate = () =>
-    update((ps) => {
-      const i = ps.findIndex((p) => p.key === selected);
-      if (i < 0) return ps;
-      const copy = { ...ps[i], key: uid(), anns: ps[i].anns.map((a) => ({ ...a, id: uid() })) };
-      return [...ps.slice(0, i + 1), copy, ...ps.slice(i + 1)];
-    });
-
-  const insertBlank = () =>
-    update((ps) => {
-      const i = ps.findIndex((p) => p.key === selected);
-      const ref = ps[i] ?? ps[ps.length - 1];
-      const blank: EditPage = { key: uid(), src: null, base: 0, rotate: 0, box: ref ? ref.box : { w: 595.28, h: 841.89 }, anns: [] };
-      const at = i >= 0 ? i + 1 : ps.length;
-      return [...ps.slice(0, at), blank, ...ps.slice(at)];
-    });
-
-  const remove = () => {
-    if (pages.length <= 1) {
-      Alert.alert('Keep at least one page', 'A PDF needs at least one page.');
-      return;
-    }
-    update((ps) => ps.filter((p) => p.key !== selected));
-    setSelected(null);
-  };
-
-  const openEditor = (page: EditPage) => {
-    tap();
+  /** Opens a page full-screen, upgrading its preview to a sharp render. */
+  const openPage = (page: EditPage) => {
     const preview = page.src !== null ? thumbs[page.src] : undefined;
     setEditing({ key: page.key, image: preview });
     if (page.src !== null && status !== 'failed') {
@@ -136,6 +90,51 @@ export default function Edit() {
         .catch(() => {});
     }
   };
+
+  const insertAfter = (key: string, page: EditPage) =>
+    setPages((ps) => {
+      const i = ps.findIndex((p) => p.key === key);
+      return [...ps.slice(0, i + 1), page, ...ps.slice(i + 1)];
+    });
+
+  const pageActions = (page: EditPage, index: number) => ({
+    onChange: (anns: Ann[]) => setPages((ps) => ps.map((p) => (p.key === page.key ? { ...p, anns } : p))),
+    onNavigate: (dir: -1 | 1) => {
+      const next = pages[index + dir];
+      if (next) openPage(next);
+    },
+    onRotate: (delta: number) =>
+      setPages((ps) => ps.map((p) => (p.key === page.key ? { ...p, rotate: (p.rotate + delta + 360) % 360 } : p))),
+    onDuplicate: () => {
+      const copy: EditPage = { ...page, key: uid(), anns: page.anns.map((a) => ({ ...a, id: uid() })) };
+      insertAfter(page.key, copy);
+      openPage(copy);
+    },
+    onInsertBlank: () => {
+      const blank: EditPage = { key: uid(), src: null, base: 0, rotate: 0, box: page.box, anns: [] };
+      insertAfter(page.key, blank);
+      openPage(blank);
+    },
+    onDelete: () => {
+      if (pages.length <= 1) {
+        Alert.alert('Keep at least one page', 'A PDF needs at least one page.');
+        return;
+      }
+      Alert.alert(`Delete page ${index + 1}?`, 'You can still discard all changes by leaving without saving.', [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            const neighbour = pages[index + 1] ?? pages[index - 1];
+            setPages((ps) => ps.filter((p) => p.key !== page.key));
+            if (neighbour) openPage(neighbour);
+            else setEditing(null);
+          },
+        },
+      ]);
+    },
+  });
 
   const save = async () => {
     if (!file) return;
@@ -151,28 +150,16 @@ export default function Edit() {
     }
   };
 
-  const actions: { icon: IconName; label: string; onPress: () => void; danger?: boolean }[] = [
-    { icon: 'brush', label: 'Annotate', onPress: () => sel && openEditor(sel) },
-    { icon: 'arrow-undo', label: 'Rotate L', onPress: () => rotate(-90) },
-    { icon: 'arrow-redo', label: 'Rotate R', onPress: () => rotate(90) },
-    { icon: 'chevron-back', label: 'Move', onPress: () => move(-1) },
-    { icon: 'chevron-forward', label: 'Move', onPress: () => move(1) },
-    { icon: 'copy-outline', label: 'Duplicate', onPress: duplicate },
-    { icon: 'document-outline', label: 'Blank after', onPress: insertBlank },
-    { icon: 'trash-outline', label: 'Delete', onPress: remove, danger: true },
-  ];
-
   return (
     <Screen glow={tool.colors[0]} glow2={tool.colors[1]}>
       {view}
-      <ToolHeader title="Edit PDF" subtitle="Annotate, rotate, reorder & more" icon={tool.icon} colors={tool.colors} />
-      <ScrollView scrollEnabled={!dragging} contentContainerStyle={{ paddingHorizontal: S.lg, paddingBottom: sel ? 260 : 140 }}>
+      <ToolHeader title="Edit PDF" subtitle="Edit text, annotate, rotate & reorder" icon={tool.icon} colors={tool.colors} />
+      <ScrollView scrollEnabled={!dragging} contentContainerStyle={{ paddingHorizontal: S.lg, paddingBottom: 140 }}>
         <FileSlot
           file={file}
           onChange={(f) => {
             setPages([]);
             setThumbs({});
-            setSelected(null);
             setFile(f);
           }}
           colors={tool.colors}
@@ -189,7 +176,7 @@ export default function Edit() {
         {pages.length > 0 && (
           <Animated.View entering={FadeIn}>
             <SectionLabel right={editCount > 0 && <Txt variant="caption" style={{ color: tool.colors[1], fontWeight: '700' }}>{editCount} edits</Txt>}>
-              {pages.length > 1 ? 'Tap to select · hold & drag to reorder' : 'Tap the page to select it'}
+              {pages.length > 1 ? 'Tap to open · hold & drag to reorder' : 'Tap the page to open it'}
             </SectionLabel>
             {status === 'failed' && (
               <View style={styles.offline}>
@@ -208,8 +195,10 @@ export default function Edit() {
               gap={GAP}
               onDragStateChange={setDragging}
               onTap={(key) => {
+                const page = pages.find((p) => p.key === key);
+                if (!page) return;
                 tap();
-                setSelected((cur) => (cur === key ? null : key));
+                openPage(page);
               }}
               onReorder={(keys) =>
                 setPages((ps) => {
@@ -218,70 +207,53 @@ export default function Edit() {
                   return keys.map((k) => byKey.get(k)).filter((p): p is EditPage => !!p);
                 })
               }
-              renderItem={(p, i) => {
-                const active = p.key === selected;
-                return (
-                  <View style={[styles.cell, { width: cellW, height: cellH }, active && { borderColor: tool.colors[0], backgroundColor: C.surface2 }]}>
-                    <PageThumb
-                      box={p.box}
-                      rotation={p.base + p.rotate}
-                      image={p.src !== null ? thumbs[p.src] : undefined}
-                      loading={p.src !== null && status !== 'failed'}
-                      maxW={cellW - 12}
-                      maxH={cellH - 30}
-                    />
-                    <View style={styles.cellFoot}>
-                      <Text style={[styles.pageNo, active && { color: C.text }]}>{i + 1}</Text>
-                      {p.src === null && <Text style={styles.tag}>BLANK</Text>}
-                      {p.anns.length > 0 && (
-                        <View style={[styles.badge, { backgroundColor: tool.colors[0] }]}>
-                          <Ionicons name="brush" size={9} color="#fff" />
-                          <Text style={styles.badgeText}>{p.anns.length}</Text>
-                        </View>
-                      )}
-                    </View>
+              renderItem={(p, i) => (
+                <View style={[styles.cell, { width: cellW, height: cellH }]}>
+                  <PageThumb
+                    box={p.box}
+                    rotation={p.base + p.rotate}
+                    image={p.src !== null ? thumbs[p.src] : undefined}
+                    loading={p.src !== null && status !== 'failed'}
+                    maxW={cellW - 12}
+                    maxH={cellH - 30}
+                  />
+                  <View style={styles.cellFoot}>
+                    <Text style={styles.pageNo}>{i + 1}</Text>
+                    {p.src === null && <Text style={styles.tag}>BLANK</Text>}
+                    {p.anns.length > 0 && (
+                      <View style={[styles.badge, { backgroundColor: tool.colors[0] }]}>
+                        <Ionicons name="brush" size={9} color="#fff" />
+                        <Text style={styles.badgeText}>{p.anns.length}</Text>
+                      </View>
+                    )}
                   </View>
-                );
-              }}
+                </View>
+              )}
             />
           </Animated.View>
         )}
       </ScrollView>
 
       <Footer>
-        {sel && (
-          <Animated.View entering={SlideInDown.springify().damping(18)} style={styles.actionBar}>
-            <Txt variant="overline" style={{ paddingHorizontal: S.xs }}>
-              Page {selIndex + 1}
-            </Txt>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 4 }}>
-              {actions.map((a, i) => (
-                <Pressable key={i} onPress={a.onPress} style={({ pressed }) => [styles.action, pressed && { backgroundColor: C.cardHi }, i === 0 && { backgroundColor: tool.colors[0] + '30' }]}>
-                  <Ionicons name={a.icon} size={20} color={a.danger ? C.danger : i === 0 ? C.text : C.sub} />
-                  <Text style={[styles.actionLabel, a.danger && { color: C.danger }, i === 0 && { color: C.text }]}>{a.label}</Text>
-                </Pressable>
-              ))}
-            </ScrollView>
-          </Animated.View>
-        )}
         <PrimaryButton label="Save changes" icon="save-outline" colors={tool.colors} disabled={!file || !pages.length} onPress={save} />
       </Footer>
 
-      {editing && editingIndex >= 0 && (
-        <PageEditor
-          key={editing.key}
-          page={pages[editingIndex]}
-          index={editingIndex}
-          image={editing.image}
-          colors={tool.colors}
-          loadText={loadText}
-          onClose={() => setEditing(null)}
-          onSave={(anns) => {
-            setPages((ps) => ps.map((p) => (p.key === editing.key ? { ...p, anns } : p)));
-            setEditing(null);
-          }}
-        />
-      )}
+      {/* One modal for the whole session, so moving between pages doesn't replay the slide-in. */}
+      <Modal visible={!!current} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setEditing(null)}>
+        {current && (
+          <PageEditor
+            key={current.key}
+            page={current}
+            index={editingIndex}
+            count={pages.length}
+            image={editing?.image}
+            colors={tool.colors}
+            loadText={loadText}
+            onClose={() => setEditing(null)}
+            {...pageActions(current, editingIndex)}
+          />
+        )}
+      </Modal>
       <BusyOverlay visible={task.busy} label={task.label} colors={tool.colors} />
     </Screen>
   );
@@ -304,15 +276,4 @@ const styles = StyleSheet.create({
   tag: { color: C.faint, fontSize: 9, fontWeight: '800', letterSpacing: 0.8 },
   badge: { flexDirection: 'row', alignItems: 'center', gap: 2, paddingHorizontal: 5, height: 16, borderRadius: 8 },
   badgeText: { color: '#fff', fontSize: 10, fontWeight: '800' },
-  actionBar: {
-    gap: S.sm,
-    padding: S.sm,
-    marginBottom: S.md,
-    borderRadius: R.lg,
-    backgroundColor: C.surface,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: C.borderStrong,
-  },
-  action: { alignItems: 'center', gap: 3, width: 70, paddingVertical: S.sm, borderRadius: R.sm },
-  actionLabel: { color: C.sub, fontSize: 11, fontWeight: '600' },
 });

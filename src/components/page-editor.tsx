@@ -8,6 +8,7 @@ import {
   PanResponder,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -61,24 +62,55 @@ const FAMILY: Record<FontFamily, string | undefined> = {
 /** Approximate distance from a text box's top to its baseline, as a fraction of font size. */
 const ASCENT = Platform.OS === 'ios' ? 0.8 : 0.93;
 
+type Geo = { rot: number; boxW: number; boxH: number };
+
+/** Maps a touch on the (rotated) on-screen page to unrotated page coordinates (0..1). */
+function toContent(sx: number, sy: number, g: Geo) {
+  const u = clamp(sx / g.boxW);
+  const v = clamp(sy / g.boxH);
+  switch (g.rot) {
+    case 90:
+      return { x: v, y: 1 - u };
+    case 180:
+      return { x: 1 - u, y: 1 - v };
+    case 270:
+      return { x: 1 - v, y: u };
+    default:
+      return { x: u, y: v };
+  }
+}
+
 const inside = (p: { x: number; y: number }, b: { nx: number; ny: number; nw: number; nh: number }, pad = 0.006) =>
   p.x >= b.nx - pad && p.x <= b.nx + b.nw + pad && p.y >= b.ny - pad && p.y <= b.ny + b.nh + pad;
 
 export function PageEditor({
   page,
   index,
+  count,
   image,
   colors,
   onClose,
-  onSave,
+  onChange,
+  onNavigate,
+  onRotate,
+  onDuplicate,
+  onInsertBlank,
+  onDelete,
   loadText,
 }: {
   page: EditPage;
   index: number;
+  count: number;
   image?: string;
   colors: Gradient;
   onClose: () => void;
-  onSave: (anns: Ann[]) => void;
+  /** Called on every change; edits are kept as you go (use undo to revert). */
+  onChange: (anns: Ann[]) => void;
+  onNavigate: (dir: -1 | 1) => void;
+  onRotate: (delta: number) => void;
+  onDuplicate: () => void;
+  onInsertBlank: () => void;
+  onDelete: () => void;
   /** Detects existing text lines; omitted for blank pages or when previews are unavailable. */
   loadText?: () => Promise<TextBlock[]>;
 }) {
@@ -95,7 +127,7 @@ export function PageEditor({
   const [pen, setPen] = useState<keyof typeof PEN>('medium');
   const [selected, setSelected] = useState<string | null>(null);
   const [draft, setDraft] = useState<InkAnn | RectAnn | null>(null);
-  const [disp, setDisp] = useState<Size>({ w: 0, h: 0 });
+  const [area, setArea] = useState<Size>({ w: 0, h: 0 });
   const [textDraft, setTextDraft] = useState<TextDraft | null>(null);
 
   // The responder is created once, so it reads live values through these refs (updated only in handlers).
@@ -106,7 +138,8 @@ export function PageEditor({
     ink: INK[0],
     marker: MARKER[0],
     pen: PEN.medium as number,
-    disp: { w: 1, h: 1 },
+    geo: { rot: 0, boxW: 1, boxH: 1 } as Geo,
+    startScreen: { x: 0, y: 0 },
     start: { x: 0, y: 0 },
     moved: false,
     draft: null as InkAnn | RectAnn | null,
@@ -131,7 +164,20 @@ export function PageEditor({
   const commit = (next: Ann[]) => {
     s.current.anns = next;
     setAnns(next);
+    onChange(next);
   };
+
+  // Page geometry: the page is shown rotated as it will appear in the saved PDF.
+  const rot = (((page.base + page.rotate) % 360) + 360) % 360;
+  const sideways = rot % 180 !== 0;
+  const shownAspect = sideways ? page.box.h / page.box.w : page.box.w / page.box.h;
+  const boxW = area.w ? Math.min(area.w, area.h * shownAspect) : 0;
+  const boxH = boxW / shownAspect;
+  const disp = sideways ? { w: boxH, h: boxW } : { w: boxW, h: boxH };
+
+  useEffect(() => {
+    s.current.geo = { rot, boxW: boxW || 1, boxH: boxH || 1 };
+  }, [rot, boxW, boxH]);
 
   const pickMode = (m: Mode) => {
     tap();
@@ -142,11 +188,7 @@ export function PageEditor({
 
   const fit = (e: LayoutChangeEvent) => {
     const { width, height } = e.nativeEvent.layout;
-    const aspect = page.box.w / page.box.h;
-    const w = Math.min(width, height * aspect);
-    const next = { w, h: w / aspect };
-    s.current.disp = next;
-    setDisp(next);
+    setArea({ w: width, h: height });
   };
 
   // eslint-disable-next-line react-hooks/refs -- handlers read refs only when gestures fire
@@ -157,7 +199,8 @@ export function PageEditor({
       onPanResponderTerminationRequest: () => false,
       onPanResponderGrant: (e) => {
         const st = s.current;
-        const p = { x: clamp(e.nativeEvent.locationX / st.disp.w), y: clamp(e.nativeEvent.locationY / st.disp.h) };
+        st.startScreen = { x: e.nativeEvent.locationX, y: e.nativeEvent.locationY };
+        const p = toContent(st.startScreen.x, st.startScreen.y, st.geo);
         st.start = p;
         st.moved = false;
         if (st.mode === 'draw') {
@@ -176,12 +219,12 @@ export function PageEditor({
       },
       onPanResponderMove: (_, g) => {
         const st = s.current;
-        const q = { x: clamp(st.start.x + g.dx / st.disp.w), y: clamp(st.start.y + g.dy / st.disp.h) };
+        const q = toContent(st.startScreen.x + g.dx, st.startScreen.y + g.dy, st.geo);
         if (Math.abs(g.dx) + Math.abs(g.dy) > 6) st.moved = true;
         if (st.draft?.type === 'ink') {
           const pts = st.draft.points;
           const last = pts[pts.length - 1];
-          if (Math.hypot((q.x - last.x) * st.disp.w, (q.y - last.y) * st.disp.h) < 1.5) return;
+          if (Math.hypot(q.x - last.x, q.y - last.y) * Math.max(st.geo.boxW, st.geo.boxH) < 1.5) return;
           st.draft = { ...st.draft, points: [...pts, q] };
           setDraft(st.draft);
         } else if (st.draft) {
@@ -299,13 +342,23 @@ export function PageEditor({
   };
 
   return (
-    <Modal visible animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
       <Screen glow={colors[0]} glow2={colors[1]}>
         <View style={[styles.head, { paddingTop: insets.top + S.sm }]}>
-          <IconButton icon="close" onPress={onClose} />
-          <View style={{ flex: 1, alignItems: 'center' }}>
-            <Txt variant="h2">Page {index + 1}</Txt>
-            <Txt variant="caption">{HINT[mode]}</Txt>
+          <Pressable
+            onPress={() => {
+              tap();
+              onClose();
+            }}
+            style={({ pressed }) => [styles.done, { backgroundColor: colors[0], opacity: pressed ? 0.8 : 1 }]}>
+            <Ionicons name="checkmark" size={18} color="#fff" />
+            <Text style={styles.doneText}>Done</Text>
+          </Pressable>
+          <View style={styles.pager}>
+            <IconButton icon="chevron-back" size={34} tint={index > 0 ? C.text : C.faint} onPress={() => index > 0 && onNavigate(-1)} />
+            <Txt variant="label" style={{ minWidth: 86, textAlign: 'center' }}>
+              {index + 1} / {count}
+            </Txt>
+            <IconButton icon="chevron-forward" size={34} tint={index < count - 1 ? C.text : C.faint} onPress={() => index < count - 1 && onNavigate(1)} />
           </View>
           <IconButton
             icon="arrow-undo"
@@ -317,9 +370,51 @@ export function PageEditor({
           />
         </View>
 
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={styles.pageActions}>
+          {(
+            [
+              ['refresh-outline', 'Rotate left', () => onRotate(-90), true],
+              ['refresh-outline', 'Rotate right', () => onRotate(90), false],
+              ['copy-outline', 'Duplicate', onDuplicate, false],
+              ['add-circle-outline', 'Blank page', onInsertBlank, false],
+              ['trash-outline', 'Delete page', onDelete, false],
+            ] as const
+          ).map(([icon, label, action, mirror]) => {
+            const danger = label === 'Delete page';
+            return (
+              <Pressable
+                key={label}
+                onPress={() => {
+                  tap();
+                  action();
+                }}
+                style={({ pressed }) => [styles.pageAction, pressed && { backgroundColor: C.cardHi }]}>
+                <Ionicons name={icon} size={16} color={danger ? C.danger : C.sub} style={mirror ? { transform: [{ scaleX: -1 }] } : undefined} />
+                <Text style={[styles.pageActionText, danger && { color: C.danger }]}>{label}</Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+
+        <Txt variant="caption" style={{ textAlign: 'center', marginTop: S.sm }}>
+          {HINT[mode]}
+        </Txt>
+
         <View style={styles.stage} onLayout={fit}>
-          {disp.w > 0 && (
-            <View style={[styles.page, { width: disp.w, height: disp.h }]}>
+          {boxW > 0 && (
+            <View style={{ width: boxW, height: boxH }}>
+            <View
+              style={[
+                styles.page,
+                {
+                  position: 'absolute',
+                  width: disp.w,
+                  height: disp.h,
+                  left: (boxW - disp.w) / 2,
+                  top: (boxH - disp.h) / 2,
+                  transform: [{ rotate: `${rot}deg` }],
+                },
+              ]}>
               {image ? (
                 <Image source={{ uri: image }} style={StyleSheet.absoluteFill} contentFit="fill" transition={150} />
               ) : (
@@ -441,6 +536,7 @@ export function PageEditor({
                   ]}
                 />
               )}
+            </View>
               <View style={StyleSheet.absoluteFill} {...responder.panHandlers} />
             </View>
           )}
@@ -554,7 +650,6 @@ export function PageEditor({
               );
             })}
           </View>
-          <PrimaryButton label="Done" icon="checkmark" colors={colors} onPress={() => onSave(anns)} />
         </View>
 
         {textDraft && (
@@ -598,7 +693,6 @@ export function PageEditor({
           </Modal>
         )}
       </Screen>
-    </Modal>
   );
 }
 
@@ -618,6 +712,22 @@ function Swatch({ color, active, onPress }: { color: string; active: boolean; on
 const styles = StyleSheet.create({
   head: { flexDirection: 'row', alignItems: 'center', gap: S.md, paddingHorizontal: S.lg, paddingBottom: S.sm },
   stage: { flex: 1, margin: S.lg, alignItems: 'center', justifyContent: 'center' },
+  done: { flexDirection: 'row', alignItems: 'center', gap: 4, height: 38, paddingHorizontal: S.md, borderRadius: 19 },
+  doneText: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  pager: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 2 },
+  pageActions: { gap: S.sm, paddingHorizontal: S.lg, paddingVertical: S.xs },
+  pageAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    height: 34,
+    paddingHorizontal: S.md,
+    borderRadius: 17,
+    backgroundColor: C.card,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: C.borderStrong,
+  },
+  pageActionText: { color: C.text, fontSize: 13, fontWeight: '600' },
   page: {
     backgroundColor: '#fff',
     shadowColor: '#000',

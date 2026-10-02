@@ -80,7 +80,7 @@ export default function Scan() {
             Camera access
           </Txt>
           <Txt style={{ textAlign: 'center' }}>
-            DocKeeper uses your camera to capture documents. Photos stay on your device.
+            1TapPDF uses your camera to capture documents. Photos stay on your device.
           </Txt>
           <PrimaryButton
             label={permission.canAskAgain ? 'Allow camera' : 'Open settings'}

@@ -2,7 +2,8 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Image } from 'expo-image';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated, {
   Easing,
   FadeInDown,
@@ -36,12 +37,12 @@ export default function Home() {
         showsVerticalScrollIndicator={false}>
         <Animated.View entering={FadeInDown.duration(500)} style={styles.top}>
           <View style={styles.brand}>
-            <IconBadge icon="layers" colors={Brand} size={40} />
+            <Image source={require('@/assets/images/logo.png')} style={styles.logo} />
             <View>
-              <Txt variant="h2" style={{ fontSize: 21 }}>
-                DocKeeper
-              </Txt>
-              <Txt variant="caption">Your pocket PDF studio</Txt>
+              <Text style={styles.wordmark}>
+                1Tap<Text style={{ color: Brand[1] }}>PDF</Text>
+              </Text>
+              <Txt variant="caption">Every PDF tool, one tap away</Txt>
             </View>
           </View>
           <Pressable onPress={() => router.push('/files')} style={styles.stat}>
@@ -177,6 +178,8 @@ function ToolTile({ tool }: { tool: Tool }) {
 const styles = StyleSheet.create({
   top: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: S.xl },
   brand: { flexDirection: 'row', alignItems: 'center', gap: S.md },
+  logo: { width: 44, height: 44, borderRadius: 12 },
+  wordmark: { color: C.text, fontSize: 22, fontWeight: '900', letterSpacing: -0.6 },
   stat: {
     flexDirection: 'row',
     alignItems: 'center',

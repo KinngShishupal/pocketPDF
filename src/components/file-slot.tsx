@@ -59,7 +59,7 @@ export function FileSlot({
           </View>
           <Txt variant="label">Choose a PDF</Txt>
           <Txt variant="caption" style={{ textAlign: 'center' }}>
-            Pick from your device or your DocKeeper library
+            Pick from your device or your 1TapPDF library
           </Txt>
           <View style={styles.actions}>
             <GhostButton icon="folder-open-outline" label="Device" onPress={fromDevice} style={{ flex: 1 }} />

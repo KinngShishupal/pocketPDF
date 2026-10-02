@@ -44,7 +44,7 @@ export function LibraryPicker({
           <View style={styles.grabber} />
           <View style={styles.head}>
             <View style={{ flex: 1 }}>
-              <Txt variant="h2">From DocKeeper</Txt>
+              <Txt variant="h2">From 1TapPDF</Txt>
               <Txt variant="caption">{multiple ? 'Tap files in the order you want them' : 'Choose a document'}</Txt>
             </View>
             <IconButton icon="close" onPress={close} />

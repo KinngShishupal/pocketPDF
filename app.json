@@ -1,18 +1,16 @@
 {
   "expo": {
-    "name": "DocKeeper",
-    "slug": "DocKeeper",
+    "name": "1TapPDF",
+    "slug": "1tappdf",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "dockeeper",
+    "scheme": "onetappdf",
     "userInterfaceStyle": "dark",
-    "ios": {
-      "icon": "./assets/expo.icon"
-    },
+    "ios": {},
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#140F2E",
+        "backgroundColor": "#E8173A",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
@@ -30,14 +28,14 @@
         {
           "backgroundColor": "#07070F",
           "image": "./assets/images/splash-icon.png",
-          "imageWidth": 76
+          "imageWidth": 132
         }
       ],
       "expo-sharing",
       [
         "expo-camera",
         {
-          "cameraPermission": "DocKeeper uses the camera to scan your documents.",
+          "cameraPermission": "1TapPDF uses the camera to scan your documents.",
           "microphonePermission": false,
           "recordAudioAndroid": false,
           "barcodeScannerEnabled": false
@@ -46,16 +44,16 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "DocKeeper needs access to your photos to turn them into PDFs.",
-          "cameraPermission": "DocKeeper uses the camera to scan your documents.",
+          "photosPermission": "1TapPDF needs access to your photos to turn them into PDFs.",
+          "cameraPermission": "1TapPDF uses the camera to scan your documents.",
           "microphonePermission": false
         }
       ],
       [
         "expo-speech-recognition",
         {
-          "microphonePermission": "DocKeeper uses the microphone so you can type documents by speaking.",
-          "speechRecognitionPermission": "DocKeeper converts your speech into text for your documents.",
+          "microphonePermission": "1TapPDF uses the microphone so you can type documents by speaking.",
+          "speechRecognitionPermission": "1TapPDF converts your speech into text for your documents.",
           "androidSpeechServicePackages": [
             "com.google.android.googlequicksearchbox"
           ]

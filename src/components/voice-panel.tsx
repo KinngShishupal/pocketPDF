@@ -56,7 +56,7 @@ export function VoicePanel({
     if (!available) {
       Alert.alert(
         'Use your keyboard mic',
-        'Live voice typing needs a development build of DocKeeper (it isn\'t included in Expo Go).\n\nFor now, tap the 🎤 on your keyboard to dictate into the text box.',
+        'Live voice typing needs a development build of 1TapPDF (it isn\'t included in Expo Go).\n\nFor now, tap the 🎤 on your keyboard to dictate into the text box.',
         [{ text: 'Got it', onPress: onFallback }],
       );
       return;

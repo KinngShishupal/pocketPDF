@@ -28,8 +28,8 @@ export type PageSize = 'fit' | keyof typeof PAGE_SIZES;
 
 export function newDoc() {
   return PDFDocument.create().then((doc) => {
-    doc.setCreator('DocKeeper');
-    doc.setProducer('DocKeeper');
+    doc.setCreator('1TapPDF');
+    doc.setProducer('1TapPDF');
     return doc;
   });
 }
@@ -204,7 +204,7 @@ export async function compressPdf(uri: string, level: CompressLevel, onProgress?
     await tick();
   }
 
-  doc.setProducer('DocKeeper');
+  doc.setProducer('1TapPDF');
   const bytes = await doc.save({ useObjectStreams: true });
   return { bytes, pages: doc.getPageCount(), optimized, totalImages: images.length };
 }
