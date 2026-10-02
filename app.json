@@ -50,6 +50,16 @@
           "cameraPermission": "DocKeeper uses the camera to scan your documents.",
           "microphonePermission": false
         }
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "DocKeeper uses the microphone so you can type documents by speaking.",
+          "speechRecognitionPermission": "DocKeeper converts your speech into text for your documents.",
+          "androidSpeechServicePackages": [
+            "com.google.android.googlequicksearchbox"
+          ]
+        }
       ]
     ],
     "experiments": {

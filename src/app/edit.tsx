@@ -1,5 +1,4 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { Image } from 'expo-image';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
@@ -9,6 +8,7 @@ import Animated, { FadeIn, SlideInDown } from 'react-native-reanimated';
 import { BusyOverlay } from '@/components/busy-overlay';
 import { FileSlot } from '@/components/file-slot';
 import { PageEditor } from '@/components/page-editor';
+import { PageThumb } from '@/components/page-thumb';
 import { SortableGrid } from '@/components/sortable-grid';
 import { Footer, PrimaryButton, Screen, SectionLabel, ToolHeader, Txt, tap } from '@/components/ui';
 import { C, R, S } from '@/constants/theme';
@@ -214,31 +214,16 @@ export default function Edit() {
               }
               renderItem={(p, i) => {
                 const active = p.key === selected;
-                const total = (p.base + p.rotate) % 360;
-                const sideways = total % 180 !== 0;
-                const ra = sideways ? p.box.h / p.box.w : p.box.w / p.box.h; // rotated aspect
-                const fitW = Math.min(cellW - 12, (cellH - 30) * ra);
-                const fitH = fitW / ra;
-                const img = p.src !== null ? thumbs[p.src] : undefined;
                 return (
                   <View style={[styles.cell, { width: cellW, height: cellH }, active && { borderColor: tool.colors[0], backgroundColor: C.surface2 }]}>
-                    <View style={{ width: fitW, height: fitH, alignItems: 'center', justifyContent: 'center' }}>
-                      <View
-                        style={[
-                          styles.thumb,
-                          {
-                            width: sideways ? fitH : fitW,
-                            height: sideways ? fitW : fitH,
-                            transform: [{ rotate: `${total}deg` }],
-                          },
-                        ]}>
-                        {img ? (
-                          <Image source={{ uri: img }} style={StyleSheet.absoluteFill} contentFit="fill" transition={200} />
-                        ) : (
-                          p.src !== null && status !== 'failed' && <ActivityIndicator size="small" color="#C0C0D0" />
-                        )}
-                      </View>
-                    </View>
+                    <PageThumb
+                      box={p.box}
+                      rotation={p.base + p.rotate}
+                      image={p.src !== null ? thumbs[p.src] : undefined}
+                      loading={p.src !== null && status !== 'failed'}
+                      maxW={cellW - 12}
+                      maxH={cellH - 30}
+                    />
                     <View style={styles.cellFoot}>
                       <Text style={[styles.pageNo, active && { color: C.text }]}>{i + 1}</Text>
                       {p.src === null && <Text style={styles.tag}>BLANK</Text>}
@@ -307,7 +292,6 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: C.border,
   },
-  thumb: { backgroundColor: '#fff', borderRadius: 3, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
   cellFoot: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 24 },
   pageNo: { color: C.sub, fontSize: 12, fontWeight: '700' },
   tag: { color: C.faint, fontSize: 9, fontWeight: '800', letterSpacing: 0.8 },

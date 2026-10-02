@@ -2,13 +2,15 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { Image } from 'expo-image';
 import * as Print from 'expo-print';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import Animated, { FadeIn, FadeInDown, LinearTransition } from 'react-native-reanimated';
 
 import { BusyOverlay } from '@/components/busy-overlay';
+import { VoicePanel } from '@/components/voice-panel';
 import { Card, Footer, PrimaryButton, Screen, SectionLabel, Segmented, ToggleRow, ToolHeader, Txt, tap } from '@/components/ui';
 import { C, R, S } from '@/constants/theme';
+import { appendPhrase } from '@/lib/dictation';
 import { stampName } from '@/lib/fs';
 import { saveDoc } from '@/lib/library';
 import { imagesToPdf, type PageSize } from '@/lib/pdf';
@@ -68,6 +70,7 @@ export default function Convert() {
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [font, setFont] = useState<TextStyleKey>('clean');
+  const bodyRef = useRef<TextInput>(null);
   const task = useTask();
 
   const addImages = async () => {
@@ -190,13 +193,19 @@ export default function Convert() {
             />
             <SectionLabel right={<Txt variant="caption">{body.length} chars</Txt>}>Content</SectionLabel>
             <TextInput
+              ref={bodyRef}
               value={body}
               onChangeText={setBody}
-              placeholder="Type or paste your text. Blank lines start new paragraphs."
+              placeholder="Type, paste, or tap the mic below and speak. Blank lines start new paragraphs."
               placeholderTextColor={C.faint}
               multiline
               textAlignVertical="top"
               style={[styles.input, styles.textarea]}
+            />
+            <VoicePanel
+              colors={tool.colors}
+              onPhrase={(phrase) => setBody((b) => appendPhrase(b, phrase))}
+              onFallback={() => bodyRef.current?.focus()}
             />
             <SectionLabel>Typeface</SectionLabel>
             <Segmented
